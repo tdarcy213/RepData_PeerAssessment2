@@ -1,0 +1,132 @@
+---
+title: "Reproducible Research PA2"
+output: html_document
+---
+# Analysis of NOAA Storm Database
+
+## Synopsis
+
+The goal of this analysis is to perform a basic exploration of an extract
+from the National Oceanic and Atmospheric Administration Storm Database, covering the years 1950 through 2011.  In particular, I intend to determine and document which weather events have created the greatest costs - both from an economic perspective, and in terms of impact to human health.  Going into the investigation - and based on recent history concerning events like Katrina in 2005 and Sandy in 2012 - my belief was that Hurricanes would likely be the most costly weather events. My results for the period 1950 - 2011 indicate that this is true of economic impact; however, in terms of the effect on human health (as determined by number of injuries plus number of fatalities), Tornadoes have proven to be the most harmful.
+
+## Data Processing
+
+The data for this analysis are contained in an extract accessible from this location: <https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2>.
+
+First, we load the necessary packages, and then display the characteristics of our operating environment.
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+Sys.info()
+sessionInfo()
+```
+The data are stored in a bzip2 compressed file.  We download the file, then read into a data table.
+```{r cache=TRUE}
+downloadUrl<-"http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+downloadFile<-"FStormData.csv.bz2"
+download.file(downloadUrl,downloadFile)
+stormData<-data.table(read.table(downloadFile,sep=",",header=T,stringsAsFactors=F))
+```
+Let's display the characteristics of the data:
+```{r}
+summary(stormData)
+```
+To support the data summarizations, I'm appending the "Year" of each weather event observation to the data table:
+```{r}
+stormData$BGN_DATE<-as.Date(stormData$BGN_DATE,format="%m/%d/%Y")
+stormData$EV_YEAR<-as.numeric(format(stormData$BGN_DATE,"%Y"))
+```
+For this analysis, I will be using the sum of FATALITIES and INJURIES to determine the impact to health.  Similarly, I am using the sum of PROPDMG and CROPDMG to determine economic impact.  This calculation is somewhat more complex, as NOAA documents the fact that "...Alphabetical characters used to signify magnitude include "K" for thousands, "M" for millions, and "B" for billions." Refer to this document for more information: <https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf>
+
+Here's the code to come up with the economic and health totals:
+```{r}
+stormData$PROP_DMG<-(
+        ifelse(stormData$PROPDMGEXP=="H",100,
+               ifelse(stormData$PROPDMGEXP=="K",1000,
+                      ifelse(stormData$PROPDMGEXP=="M",1000000,
+                             ifelse(stormData$PROPDMGEXP=="B",1000000000,1))))*stormData$PROPDMG)
+stormData$CROP_DMG<-(
+        ifelse(stormData$CROPDMGEXP=="H",100,
+               ifelse(stormData$CROPDMGEXP=="K",1000,
+                      ifelse(stormData$CROPDMGEXP=="M",1000000,
+                             ifelse(stormData$CROPDMGEXP=="B",1000000000,1))))*stormData$CROPDMG)
+
+stormDataSmry<-stormData[,list(SUM_HEALTH=sum(FATALITIES+INJURIES),SUM_ECON=sum(PROP_DMG+CROP_DMG)),by=c("EV_YEAR","EVTYPE")]
+```
+To facilitate determining which weather event caused the greatest damage in each year, I calculate the maximums of the "HEALTH" and "ECON" sums, and "merge" these to the data table:
+```{r}
+stormDataMax<-stormDataSmry[,list(MAX_HEALTH=max(SUM_HEALTH),MAX_ECON=max(SUM_ECON)),by=c("EV_YEAR")]
+stormDataSmry<-merge(stormDataSmry,stormDataMax,by=c("EV_YEAR"))
+```
+Now let's see what the data look like:
+```{r}
+summary(stormDataSmry)
+```
+This yields an interesting result.  I observe that the maximum value of "MAX_ECON" is 1.166e+11 - or 116.6 BILLION.  That seems awfully large for a single year.  I am curious, so I display the row that contains this value:
+```{r}
+stormData[stormData$PROP_DMG==max(stormData$PROP_DMG),]
+```
+This was a Napa Valley flood in 2006.  The "REMARKS" speak of damage in the millions of dollars.  I have a hunch that perhaps the "PROPDMGEXP" and/or "CROPDMGEXP" value may be incorrect:
+```{r}
+stormData$PROPDMGEXP[stormData$PROP_DMG==max(stormData$PROP_DMG)]
+stormData$CROPDMGEXP[stormData$PROP_DMG==max(stormData$PROP_DMG)]
+```
+I observe that the "PROPDMGEXP" value is "B".  Based on the "REMARKS" information, and also bolstered by information attained from the Internet(including this report that cites damage over 36 years from 19 floods yielded some $542 MILLION in property damage: <https://www.llis.dhs.gov/content/napa-river-flood-protection-project>), I change the value of PROPDMGEXP to "M", and rebuild my summary data table:
+```{r}
+stormData$PROPDMGEXP[stormData$PROP_DMG==max(stormData$PROP_DMG)]<-"M"
+stormData$PROP_DMG<-(
+        ifelse(stormData$PROPDMGEXP=="H",100,
+               ifelse(stormData$PROPDMGEXP=="K",1000,
+                      ifelse(stormData$PROPDMGEXP=="M",1000000,
+                             ifelse(stormData$PROPDMGEXP=="B",1000000000,1))))*stormData$PROPDMG)
+stormData$CROP_DMG<-(
+        ifelse(stormData$CROPDMGEXP=="H",100,
+               ifelse(stormData$CROPDMGEXP=="K",1000,
+                      ifelse(stormData$CROPDMGEXP=="M",1000000,
+                             ifelse(stormData$CROPDMGEXP=="B",1000000000,1))))*stormData$CROPDMG)
+
+stormDataSmry<-stormData[,list(SUM_HEALTH=sum(FATALITIES+INJURIES),SUM_ECON=sum(PROP_DMG+CROP_DMG)),by=c("EV_YEAR","EVTYPE")]
+stormDataMax<-stormDataSmry[,list(MAX_HEALTH=max(SUM_HEALTH),MAX_ECON=max(SUM_ECON)),by=c("EV_YEAR")]
+stormDataSmry<-merge(stormDataSmry,stormDataMax,by=c("EV_YEAR"))
+```
+Let's display the characteristics of the updated data table:
+```{r}
+summary(stormDataSmry)
+```
+The maximum value of "MAX_ECON" is now 5.180e+10 (51.8 BILLION).
+
+## Results
+
+First, I subset the summary table, to present a "health" summary and an "economic" summary.  These are used to present the event in each year that yielded the greatest impact, based on those categories:
+```{r}
+healthSmry<-subset(stormDataSmry,SUM_HEALTH==MAX_HEALTH,select=c("EV_YEAR","EVTYPE","SUM_HEALTH"))
+econSmry<-subset(stormDataSmry,SUM_ECON==MAX_ECON,select=c("EV_YEAR","EVTYPE","SUM_ECON"))
+maxeconSmry<-econSmry[econSmry$SUM_ECON==max(econSmry$SUM_ECON),]
+maxhealthSmry<-healthSmry[healthSmry$SUM_HEALTH==max(healthSmry$SUM_HEALTH),]
+```
+Using the ggplot2 and gridExtra packages, I create and display the plots showing the events yielding maximum damages per year:
+
+```{r}
+phealthSmry<-ggplot(healthSmry[order(EV_YEAR)],aes(x=EV_YEAR,y=SUM_HEALTH,fill=EVTYPE))+geom_bar(color="black",stat="identity",position=position_dodge())+ggtitle(expression(atop("NOAA STORM DATA", atop(italic("1950 - 2011"), ""))))+xlab("YEAR")+ylab("TOTAL HEALTH EVENTS")+scale_fill_brewer(palette="Paired")+geom_text(data = maxhealthSmry, aes(label=SUM_HEALTH),hjust=1.5, vjust=1,size=3,color="blue4")
+peconSmry<-ggplot(econSmry[order(EV_YEAR)],aes(x=EV_YEAR,y=SUM_ECON,fill=EVTYPE))+geom_bar(color="black",stat="identity",position=position_dodge())+ggtitle(expression(atop("NOAA STORM DATA", atop(italic("1950 - 2011"), ""))))+xlab("YEAR")+ylab("TOTAL ECONOMIC DAMAGE")+scale_fill_brewer(palette="Paired")+geom_text(data = maxeconSmry, aes(label=SUM_ECON),hjust=1.25, vjust=1,size=3,color="blue4")
+grid.arrange(peconSmry,phealthSmry,nrow=2)
+```
+
+From these plots, it is clear to see that Tornadoes have had the greatest impact on health.  As for economic impact, the single greatest event was a hurricane (2005 - presumably, Katrina); however, over the duration of this dataset, there has been a prevalance of Tornadoes being reported as having he highest economic impact per year.  Therefore, we'll summarize by event, and present the top 5 events causing damage per category (health vs. economic):
+
+```{r}
+stormDataTot<-stormDataSmry[,list(TOT_HEALTH=sum(SUM_HEALTH),TOT_ECON=sum(SUM_ECON)),by=c("EVTYPE")]
+maxeconTot<-stormDataTot[stormDataTot$TOT_ECON==max(stormDataTot$TOT_ECON),]
+maxhealthTot<-stormDataTot[stormDataTot$TOT_HEALTH==max(stormDataTot$TOT_HEALTH),]
+top5health<-stormDataTot[order(TOT_HEALTH,decreasing=T),][1:5]
+top5econ<-stormDataTot[order(TOT_ECON,decreasing=T),][1:5]
+ptop5health<-ggplot(top5health[order(TOT_HEALTH)],aes(x=EVTYPE,y=TOT_HEALTH,fill=EVTYPE))+geom_bar(color="black",stat="identity",position=position_dodge())+ggtitle(expression(atop("NOAA STORM DATA", atop(italic("1950 - 2011"), ""))))+xlab("EVENT")+ylab("TOTAL HEALTH EVENTS")+scale_fill_brewer(palette="Paired")+geom_text(data = maxhealthTot, aes(label=TOT_HEALTH),hjust=2.5, vjust=1,size=4,color="blue4")+theme(axis.text.x = element_blank())
+ptop5econ<-ggplot(top5econ[order(TOT_ECON)],aes(x=EVTYPE,y=TOT_ECON,fill=EVTYPE))+geom_bar(color="black",stat="identity",position=position_dodge())+ggtitle(expression(atop("NOAA STORM DATA", atop(italic("1950 - 2011"), ""))))+xlab("EVENT")+ylab("TOTAL ECONOMIC DAMAGE")+scale_fill_brewer(palette="Paired")+geom_text(data = maxeconTot, aes(label=TOT_ECON),hjust=1.5, vjust=1,size=4,color="blue4")+theme(axis.text.x = element_blank())
+grid.arrange(ptop5health,ptop5econ,nrow=2)
+```
+
+From these plots, we draw our conclusions:
+
+For the period 1950 - 2011, based on the NOAA data, Tornadoes have had the greatest impact to health (in terms of FATALITIES and INJURIES), and Hurricanes have caused the greatest economic damage.
